@@ -1,0 +1,313 @@
+// MatchPoint - Prisma Schema v2.0
+// PostgreSQL database
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── Enums ────────────────────────────────────────────────────────────────────
+
+enum Role {
+  PLAYER
+  OWNER
+  ADMIN
+}
+
+enum Zone {
+  NORTE
+  SUR
+  ESTE
+  OESTE
+  CENTRO
+}
+
+enum Sport {
+  PADEL
+  TENNIS
+  FUTBOL
+  BASQUET
+  VOLEY
+}
+
+enum BookingType {
+  CASUAL
+  COMPETITIVE
+}
+
+enum BookingVisibility {
+  PUBLIC
+  PRIVATE
+}
+
+enum BookingStatus {
+  PENDING
+  CONFIRMED
+  COMPLETED
+  CANCELLED
+}
+
+enum TournamentStatus {
+  UPCOMING
+  ONGOING
+  COMPLETED
+  CANCELLED
+}
+
+enum FriendshipStatus {
+  PENDING
+  ACCEPTED
+  REJECTED
+}
+
+// ─── Models ───────────────────────────────────────────────────────────────────
+
+model User {
+  id        String   @id @default(cuid())
+  name      String
+  email     String   @unique
+  password  String
+  role      Role     @default(PLAYER)
+  avatar    String?  @default("https://api.dicebear.com/7.x/avataaars/svg?seed=default")
+  zone      Zone     @default(CENTRO)
+  padelTag  String   @unique
+  points    Int      @default(0)
+  isNewUser Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  ownedVenues        Venue[]              @relation("VenueOwner")
+  organizedBookings  Booking[]            @relation("BookingOrganizer")
+  bookingPlayers     BookingPlayer[]
+  sentFriendships    Friendship[]         @relation("FriendshipSender")
+  receivedFriendships Friendship[]        @relation("FriendshipReceiver")
+  clubMembership     ClubMember?
+  ownedClubs         Club[]               @relation("ClubOwner")
+  tournamentEntries  TournamentParticipant[]
+  notifications      Notification[]
+  refreshTokens      RefreshToken[]
+
+  @@index([email])
+  @@index([padelTag])
+  @@index([zone])
+}
+
+model RefreshToken {
+  id        String   @id @default(cuid())
+  token     String   @unique
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([token])
+}
+
+model Friendship {
+  id         String           @id @default(cuid())
+  senderId   String
+  receiverId String
+  status     FriendshipStatus @default(PENDING)
+  createdAt  DateTime         @default(now())
+  updatedAt  DateTime         @updatedAt
+
+  sender   User @relation("FriendshipSender", fields: [senderId], references: [id], onDelete: Cascade)
+  receiver User @relation("FriendshipReceiver", fields: [receiverId], references: [id], onDelete: Cascade)
+
+  @@unique([senderId, receiverId])
+  @@index([senderId])
+  @@index([receiverId])
+}
+
+model Venue {
+  id          String  @id @default(cuid())
+  name        String
+  address     String
+  zone        Zone
+  description String?
+  imageUrl    String?
+  rating      Float   @default(0)
+  ratingCount Int     @default(0)
+  isActive    Boolean @default(true)
+  ownerId     String
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  owner   User     @relation("VenueOwner", fields: [ownerId], references: [id])
+  courts  Court[]
+  bookings Booking[]
+  tournaments Tournament[]
+
+  @@index([zone])
+  @@index([ownerId])
+  @@index([isActive])
+}
+
+model Court {
+  id       String  @id @default(cuid())
+  name     String  // e.g. "Cancha 1", "Central"
+  sport    Sport
+  surface  String? // "Cemento", "Cesped sintetico", "Madera", etc.
+  indoor   Boolean @default(false)
+  isActive Boolean @default(true)
+  venueId  String
+
+  venue    Venue     @relation(fields: [venueId], references: [id], onDelete: Cascade)
+  bookings Booking[]
+
+  @@index([venueId])
+  @@index([sport])
+}
+
+model Booking {
+  id         String            @id @default(cuid())
+  date       DateTime          @db.Date
+  startTime  String            // "HH:MM" format
+  duration   Int               // minutes: 60, 90, 120
+  level      String            // e.g. "Intermedio", "4ta"
+  type       BookingType       @default(CASUAL)
+  visibility BookingVisibility @default(PUBLIC)
+  status     BookingStatus     @default(CONFIRMED)
+  notes      String?
+  price      Float
+  maxPlayers Int               @default(4)
+
+  organizerId String
+  venueId     String
+  courtId     String
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  organizer User            @relation("BookingOrganizer", fields: [organizerId], references: [id])
+  venue     Venue           @relation(fields: [venueId], references: [id])
+  court     Court           @relation(fields: [courtId], references: [id])
+  players   BookingPlayer[]
+  result    BookingResult?
+
+  @@unique([courtId, date, startTime]) // no double booking
+  @@index([organizerId])
+  @@index([venueId])
+  @@index([date])
+  @@index([status])
+  @@index([visibility])
+}
+
+model BookingPlayer {
+  id        String   @id @default(cuid())
+  bookingId String
+  userId    String
+  joinedAt  DateTime @default(now())
+
+  booking Booking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([bookingId, userId])
+  @@index([bookingId])
+  @@index([userId])
+}
+
+model BookingResult {
+  id           String   @id @default(cuid())
+  bookingId    String   @unique
+  winnerIds    String[] // array of user IDs
+  score        String?  // e.g. "6-3 6-4"
+  pointsAwarded Boolean @default(false)
+  recordedAt   DateTime @default(now())
+
+  booking Booking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+}
+
+model Club {
+  id          String   @id @default(cuid())
+  name        String   @unique
+  tag         String   @unique // e.g. "#PADEL_NORTE"
+  description String?
+  imageUrl    String?
+  points      Int      @default(0)
+  ownerId     String
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  owner   User         @relation("ClubOwner", fields: [ownerId], references: [id])
+  members ClubMember[]
+  tournaments Tournament[]
+
+  @@index([ownerId])
+}
+
+model ClubMember {
+  id       String   @id @default(cuid())
+  userId   String   @unique // one club per user
+  clubId   String
+  joinedAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  club Club @relation(fields: [clubId], references: [id], onDelete: Cascade)
+
+  @@index([clubId])
+}
+
+model Tournament {
+  id          String            @id @default(cuid())
+  name        String
+  description String?
+  venueId     String
+  clubId      String?
+  date        DateTime
+  level       String
+  prize       String?
+  maxPlayers  Int               @default(16)
+  entryFee    Float             @default(0)
+  status      TournamentStatus  @default(UPCOMING)
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+
+  venue        Venue                   @relation(fields: [venueId], references: [id])
+  club         Club?                   @relation(fields: [clubId], references: [id])
+  participants TournamentParticipant[]
+
+  @@index([venueId])
+  @@index([status])
+  @@index([date])
+}
+
+model TournamentParticipant {
+  id           String   @id @default(cuid())
+  tournamentId String
+  userId       String
+  registeredAt DateTime @default(now())
+
+  tournament Tournament @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
+  user       User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([tournamentId, userId])
+  @@index([tournamentId])
+  @@index([userId])
+}
+
+model Notification {
+  id        String   @id @default(cuid())
+  userId    String
+  title     String
+  message   String
+  type      String   // "booking", "friend", "tournament", "system"
+  read      Boolean  @default(false)
+  data      Json?    // optional payload
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([read])
+}
